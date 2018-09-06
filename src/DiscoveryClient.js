@@ -23,7 +23,7 @@ const PING_INTERVAL = 1000;
  * client.on('connection', rinfo => console.log('connection', rinfo));
  * client.on('close', () => console.log('close'));
  */
-class Client extends EventEmitter {
+class DiscoveryClient extends EventEmitter {
   constructor({
     port = BROADCAST_PORT,
     broadcastPort = BROADCAST_PORT,
@@ -181,4 +181,4 @@ class Client extends EventEmitter {
   }
 }
 
-export default Client;
+export default DiscoveryClient;
