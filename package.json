@@ -1,0 +1,39 @@
+{
+  "name": "@ircam/node-discovery",
+  "version": "1.0.0",
+  "description": "Simple utility to discover devices on a network",
+  "main": "dist/index.js",
+  "author": "Benjamin Matuszewski",
+  "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "bundle": "node ./bin/runner --bundle",
+    "deploy": "np --yolo",
+    "doc": "jsdoc -c jsdoc.json",
+    "test": "babel-tape-runner tests/**.js",
+    "transpile": "node ./bin/runner --transpile",
+    "version": "npm run transpile && npm run doc && git add docs",
+    "prewatch": "npm run transpile",
+    "watch": "node ./bin/runner --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@ircam/jsdoc-template": "^1.0.2",
+    "babel-core": "^6.26.0",
+    "babel-plugin-transform-es2015-modules-commonjs": "^6.26.0",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.6.1",
+    "babel-tape-runner": "^2.0.1",
+    "browserify": "^14.5.0",
+    "chalk": "^2.3.0",
+    "fs-extra": "^4.0.3",
+    "jsdoc": "^3.5.5",
+    "klaw": "^2.1.1",
+    "np": "^2.18.2",
+    "tape": "^4.8.0",
+    "uglify-js": "^3.2.2",
+    "watch": "^1.0.2"
+  }
+}
