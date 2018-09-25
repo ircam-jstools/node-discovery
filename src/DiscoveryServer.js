@@ -71,30 +71,50 @@ class DiscoveryServer extends EventEmitter {
 
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
+      const key = getKey(rinfo);
 
-      // socket is used for something else
-      if (msg[0] !== 'DISCOVERY_HANDSHAKE' && msg[0] !== '0') {
-        this.emit('message', buffer, rinfo);
-      } else {
-        const key = getKey(rinfo);
-
-        if (!this.clients.has(key))
+      if (msg[0] === 'DISCOVERY_HANDSHAKE') {
+        if (!this.clients.has(key)) {
           this._receiveHandshake(msg, rinfo);
-        else
+        } else {
+          // client is registered by the server but sends handshake
+          // aka client restarted -> reset the connection
+          this._disconnectClient(key);
+          this._sendError(msg, rinfo);
+        }
+      } else if (msg[0] === 'DISCOVERY_PING') {
+        if (this.clients.has(key)) {
           this._receivePing(msg, rinfo);
+        } else {
+          // client is not registered by server but sends a ping
+          // aka server restarted => ask for handshake
+          this._sendError(msg, rinfo);
+        }
+      } else {
+        // forward any message that are not related to the protocol
+        this.emit('message', buffer, rinfo);
       }
     });
 
     this.udp.bind(this.broadcastPort, () => {
-      if (this.verbose)
+      if (this.verbose) {
         console.log('binded server at:', this.udp.address());
+      }
     });
   }
 
   _receiveHandshake(msg, rinfo) {
     const key = getKey(rinfo);
     const lastSeen = getTime();
-    const payload = JSON.parse(msg[1]);
+
+    let payload = null;
+
+    try {
+      payload = JSON.parse(msg[1]);
+    } catch(e) {
+      payload = {};
+    }
+
     const client = { rinfo, lastSeen, payload };
 
     this.clients.set(key, client);
@@ -102,10 +122,9 @@ class DiscoveryServer extends EventEmitter {
 
     if (this.verbose) {
       console.log('> connection:', client);
-      console.log('> connected clients:', this.clients);
     }
 
-    const ack = Buffer.from('1');
+    const ack = Buffer.from('DISCOVERY_HANDSHAKE_ACK');
     this.udp.send(ack, 0, ack.length, rinfo.port, rinfo.address);
   }
 
@@ -115,8 +134,24 @@ class DiscoveryServer extends EventEmitter {
     const client = this.clients.get(key);
     client.lastSeen = now;
     // send pong
-    const pong = Buffer.from('1');
+    const pong = Buffer.from('DISCOVERY_PONG');
     this.udp.send(pong, 0, pong.length, rinfo.port, rinfo.address);
+  }
+
+  _sendError(msg, rinfo) {
+    const err = Buffer.from('DISCOVERY_ERROR');
+    this.udp.send(err, 0, err.length, rinfo.port, rinfo.address);
+  }
+
+  _disconnectClient(key) {
+    const client = this.clients.get(key);
+
+    this.clients.delete(key);
+    this.emit('close', client, this.clients);
+
+    if (this.verbose) {
+      console.log('> close:', client);
+    }
   }
 
   _monitorClients() {
@@ -126,13 +161,7 @@ class DiscoveryServer extends EventEmitter {
       const { lastSeen } = client;
 
       if (now - lastSeen > DISCONNECT_TIMEOUT) {
-        this.clients.delete(key);
-        this.emit('close', client, this.clients);
-
-        if (this.verbose) {
-          console.log('> close:', client);
-          console.log('> connected clients:', this.clients);
-        }
+        this._disconnectClient(key);
       }
     }
   }

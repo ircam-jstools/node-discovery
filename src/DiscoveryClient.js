@@ -86,16 +86,15 @@ class DiscoveryClient extends EventEmitter {
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString();
 
-      // socket is used for something else
-      if (msg !== '1') {
-        // forward message
-        // @todo - this is not clean, review...
-        this.emit('message', buffer, rinfo);
+      if (msg === 'DISCOVERY_HANDSHAKE_ACK') {
+        this._receiveHandshakeAck(msg, rinfo);
+      } else if (msg === 'DISCOVERY_PONG') {
+        this._receivePong(msg, rinfo);
+      } else if (msg === 'DISCOVERY_ERROR') {
+        this._resetConnection();
       } else {
-        if (this.state === 'disconnected')
-          this._receiveHandshake(msg, rinfo);
-        else
-          this._receivePong(msg, rinfo);
+        // forward messages that are not part of the discovery protocol
+        this.emit('message', buffer, rinfo);
       }
     });
 
@@ -121,7 +120,7 @@ class DiscoveryClient extends EventEmitter {
     this.handshakeIntervalId = setTimeout(this._sendHandshake, HANDSHAKE_INTERVAL);
   }
 
-  _receiveHandshake(msg, rinfo) {
+  _receiveHandshakeAck(msg, rinfo) {
     this.state = 'connected';
 
     clearTimeout(this.handshakeIntervalId);
@@ -144,7 +143,7 @@ class DiscoveryClient extends EventEmitter {
     if (this.verbose)
       console.log('> ping:', this.state);
 
-    const msg = Buffer.from('0');;
+    const msg = Buffer.from('DISCOVERY_PING');;
     this.udp.send(msg, 0, msg.length, this.server.port, this.server.address);
   }
 
@@ -166,18 +165,22 @@ class DiscoveryClient extends EventEmitter {
         console.log('> close', this.server);
 
       this.emit('close');
-
-      clearInterval(this.pingIntervalId);
-      clearInterval(this.monitorIntervalId);
-      this.pingIntervalId = null;
-      this.monitorIntervalId = null;
-
-      this.server = null;
-      this.lastSeen = null;
-      this.state = 'disconnected';
-
-      this._sendHandshake();
+      this._resetConnection();
     }
+  }
+
+  _resetConnection() {
+    clearTimeout(this.handshakeIntervalId);
+    clearInterval(this.pingIntervalId);
+    clearInterval(this.monitorIntervalId);
+    this.pingIntervalId = null;
+    this.monitorIntervalId = null;
+
+    this.server = null;
+    this.lastSeen = null;
+    this.state = 'disconnected';
+    // restart handshake attempt
+    this._sendHandshake();
   }
 }
 
