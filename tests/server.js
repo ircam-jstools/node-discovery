@@ -3,12 +3,12 @@ import { DiscoveryServer } from '../src/index';
 const server = new DiscoveryServer({ verbose: false });
 
 server.addListener('connection', (client, clients) => {
-  // console.log('connection: client', client);
+  console.log('connection: client', client);
   // console.log('connection: clients', clients.size);
 });
 
 server.addListener('close', (client, clients) => {
-  // console.log('close: client', client);
+  console.log('close: client', client);
   // console.log('close: clients', clients.size);
 });
 

@@ -72,15 +72,23 @@ class DiscoveryServer extends EventEmitter {
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
       const key = getKey(rinfo);
+      msg[0] = msg[0].trim();
 
       if (msg[0] === 'DISCOVERY_HANDSHAKE') {
         if (!this.clients.has(key)) {
           this._receiveHandshake(msg, rinfo);
         } else {
-          // client is registered by the server but sends handshake
-          // aka client restarted -> reset the connection
-          this._disconnectClient(key);
-          this._sendError(msg, rinfo);
+          const client = this.clients.get(key);
+          const handshakeId = parseInt(msg[1]);
+
+          // the handshake message is broadcasted, then it can be received
+          // multiple times according to number of network device
+          if (client.handshakeId !== handshakeId) {
+            // client is registered by the server but sends handshake
+            // aka client restarted -> reset the connection
+            this._disconnectClient(key);
+            this._sendError(msg, rinfo);
+          }
         }
       } else if (msg[0] === 'DISCOVERY_PING') {
         if (this.clients.has(key)) {
@@ -106,16 +114,16 @@ class DiscoveryServer extends EventEmitter {
   _receiveHandshake(msg, rinfo) {
     const key = getKey(rinfo);
     const lastSeen = getTime();
-
+    const handshakeId = parseInt(msg[1]);
     let payload = null;
 
     try {
-      payload = JSON.parse(msg[1]);
+      payload = JSON.parse(msg[2]);
     } catch(e) {
       payload = {};
     }
 
-    const client = { rinfo, lastSeen, payload };
+    const client = { rinfo, lastSeen, payload, handshakeId };
 
     this.clients.set(key, client);
     this.emit('connection', client, this.clients);

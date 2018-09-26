@@ -42,6 +42,7 @@ class DiscoveryClient extends EventEmitter {
 
     this.server = null;
     this.lastSeen = null;
+    this.handshakeId = 0;
 
     this.handshakeIntervalId = null;
     this.pingIntervalId = null;
@@ -112,7 +113,9 @@ class DiscoveryClient extends EventEmitter {
     if (this.verbose)
       console.log('sendHandshake', this.state);
 
-    const msg = Buffer.from('DISCOVERY_HANDSHAKE ' + JSON.stringify(this.payload));
+    const msg = Buffer.from('DISCOVERY_HANDSHAKE ' + this.handshakeId + ' ' + JSON.stringify(this.payload));
+    this.handshakeId += 1;
+
     this.udp.setBroadcast(true);
     this.udp.send(msg, 0, msg.length, this.broadcastPort, BROADCAST_ADDRESS);
 
