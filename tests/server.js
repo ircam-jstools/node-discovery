@@ -1,4 +1,4 @@
-import { DiscoveryServer } from '../src/index';
+const { DiscoveryServer } = require('../src/index');
 
 const server = new DiscoveryServer({ verbose: false });
 

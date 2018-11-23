@@ -1,14 +1,15 @@
-import { DiscoveryClient } from '../src/index';
-import { BROADCAST_PORT } from '../src/config';
+const { DiscoveryClient } = require('../dist/index');
+const { BROADCAST_PORT } = require('../dist/config');
 
-const port = BROADCAST_PORT + 1;
+const num = process.argv[2];
+const port = BROADCAST_PORT + parseInt(num);
 
 console.log('client will be on port:', port);
 
 const client = new DiscoveryClient({
   verbose: false,
   port: port,
-  payload: { hostname: 'pouet-02.local' },
+  payload: { hostname: `pouet-${num}.local` },
 });
 
 client.on('message', (rinfo, msg) => {
