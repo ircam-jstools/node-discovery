@@ -5,9 +5,9 @@ import { BROADCAST_PORT } from './config';
 import { getTime } from './utils';
 
 const BROADCAST_ADDRESS = '255.255.255.255';
-const HANDSHAKE_INTERVAL = 1000;
-const MONITOR_INTERVAL = 1000;
-const PING_INTERVAL = 1000;
+const DISCOVER_INTERVAL = 1000;
+const ACK_TIMEOUT = 4000; // reset connection after duration
+const KEEPALIVE_INTERVAL = 1000; // ms
 
 /**
  * Create a client that tries to connect to a DiscoveryServer.
@@ -38,19 +38,30 @@ class DiscoveryClient extends EventEmitter {
     this.verbose = verbose;
 
     this.udp = null;
+
     this.state = 'disconnected';
-
     this.server = null;
-    this.lastSeen = null;
-    this.handshakeId = 0;
 
-    this.handshakeIntervalId = null;
-    this.pingIntervalId = null;
-    this.monitorIntervalId = null;
+    this.broadcast = this.broadcast.bind(this);
+    this.messageId = -1; // ID of _last_ message
+    this.send = this.send.bind(this);
 
-    this._sendHandshake = this._sendHandshake.bind(this);
-    this._sendPing = this._sendPing.bind(this);
-    this._monitorConnection = this._monitorConnection.bind(this);
+    this.ackTimeoutId = null; // for aperiodic request
+
+    this.discoverTimeoutId = null; // periodic
+    this._sendDiscoverReq = this._sendDiscoverReq.bind(this);
+    this._receiveDiscoverAck = this._receiveDiscoverAck.bind(this);
+
+    this._sendConnectReq = this._sendConnectReq.bind(this);
+    this._receiveConnectAck = this._receiveConnectAck.bind(this);
+
+    this.keepaliveTimeoutId = null; // periodic
+    this._sendKeepaliveReq = this._sendKeepaliveReq.bind(this);
+    this._receiveKeepaliveAck = this._receiveKeepaliveAck.bind(this);
+
+    this._resetConnection = this._resetConnection.bind(this);
+
+    this._receiveError = this._receiveError.bind(this);
   }
 
   /**
@@ -77,6 +88,18 @@ class DiscoveryClient extends EventEmitter {
       const buf = Buffer.from(msg);
       const { port, address } = this.server;
 
+      this.udp.setBroadcast(false);
+      this.udp.send(buf, 0, buf.length, port, address);
+    }
+  }
+
+  broadcast(msg) {
+    if (this.udp) {
+      const buf = Buffer.from(msg);
+      const port =  this.broadcastPort;
+      const address= BROADCAST_ADDRESS;
+
+      this.udp.setBroadcast(true);
       this.udp.send(buf, 0, buf.length, port, address);
     }
   }
@@ -85,23 +108,35 @@ class DiscoveryClient extends EventEmitter {
     this.udp = dgram.createSocket('udp4');
 
     this.udp.on('message', (buffer, rinfo) => {
-      const msg = buffer.toString();
+      const msg = buffer.toString().split(' ');
 
-      if (msg === 'DISCOVERY_HANDSHAKE_ACK') {
-        this._receiveHandshakeAck(msg, rinfo);
-      } else if (msg === 'DISCOVERY_PONG') {
-        this._receivePong(msg, rinfo);
-      } else if (msg === 'DISCOVERY_ERROR') {
-        this._resetConnection();
-      } else {
-        // forward messages that are not part of the discovery protocol
-        this.emit('message', buffer, rinfo);
+      switch(msg[0]) {
+        case 'DISCOVER_ACK': {
+          this._receiveDiscoverAck(msg, rinfo);
+          break;
+        }
+        case 'CONNECT_ACK': {
+          this._receiveConnectAck(msg, rinfo);
+          break;
+        }
+        case 'KEEPALIVE_ACK': {
+          this._receiveKeepaliveAck(msg, rinfo);
+          break;
+        }
+        case 'ERROR': {
+          this._receiveError(msg, rinfo);
+          break;
+        }
+        default: {
+          // forward messages that are not part of the connection protocol
+          this.emit('message', buffer, rinfo);
+          break;
+        }
+
       }
     });
 
-    this.udp.on('listening', () => {
-      this._sendHandshake();
-    });
+    this.udp.on('listening', this._sendDiscoverReq);
 
     this.udp.bind(this.port, () => {
       if (this.verbose)
@@ -109,81 +144,112 @@ class DiscoveryClient extends EventEmitter {
     });
   }
 
-  _sendHandshake() {
-    if (this.verbose)
-      console.log('sendHandshake', this.state);
-
-    const msg = Buffer.from('DISCOVERY_HANDSHAKE ' + this.handshakeId + ' ' + JSON.stringify(this.payload));
-    this.handshakeId += 1;
-
-    this.udp.setBroadcast(true);
-    this.udp.send(msg, 0, msg.length, this.broadcastPort, BROADCAST_ADDRESS);
+  _sendDiscoverReq() {
+    clearTimeout(this.discoverTimeoutId);
+    this.messageId += 1;
+    const msg = 'DISCOVER_REQ ' + this.messageId;
+    this.broadcast(msg);
 
     // send handshakes until we have a response from the server
-    this.handshakeIntervalId = setTimeout(this._sendHandshake, HANDSHAKE_INTERVAL);
+    this.discoverTimeoutId = setTimeout(this._sendDiscoverReq, DISCOVER_INTERVAL);
   }
 
-  _receiveHandshakeAck(msg, rinfo) {
-    this.state = 'connected';
+  _receiveDiscoverAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    if(this.messageId !== messageId) {
+      if(this.verbose) {
+        console.log('ignore discover ack ' + msg[1]);
+      }
+    } else {
+      clearTimeout(this.discoverTimeoutId);
 
-    clearTimeout(this.handshakeIntervalId);
-    this.handshakeIntervalId = null;
+      this.server = rinfo;
+      if(this.verbose) {
+        console.log('> discovered: ', this.server);
+      }
 
-    this.udp.setBroadcast(false);
-    this.server = rinfo;
-    this.lastSeen = getTime();
-
-    this.emit('connection', rinfo);
-
-    if (this.verbose)
-      console.log('> connection', this.server);
-
-    this.pingIntervalId = setInterval(this._sendPing, PING_INTERVAL);
-    this.monitorIntervalId = setInterval(this._monitorConnection, MONITOR_INTERVAL);
+      if(this.state !== 'connected') {
+        this._sendConnectReq();
+      }
+    }
   }
 
-  _sendPing() {
-    if (this.verbose)
-      console.log('> ping:', this.state);
+  _sendConnectReq() {
+    clearTimeout(this.ackTimeoutId);
+    this.messageId += 1;
+    const msg = 'CONNECT_REQ ' + this.messageId + ' ' + JSON.stringify(this.payload);
+    this.send(msg);
 
-    const msg = Buffer.from('DISCOVERY_PING');;
-    this.udp.send(msg, 0, msg.length, this.server.port, this.server.address);
+    this.ackTimeoutId = setTimeout(this._resetConnection, ACK_TIMEOUT);
   }
 
-  _receivePong(msg, rinfo) {
-    if (this.verbose)
-      console.log('> pong:', this.state);
+  _receiveConnectAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    if(this.messageId !== messageId) {
+      if(this.verbose) {
+        console.log('ignore connect ack ' + msg[1]);
+      }
+    } else {
+      clearTimeout(this.ackTimeoutId);
 
-    this.lastSeen = getTime();
+      this.state = 'connected';
+      this._sendKeepaliveReq();
+    }
   }
 
-  _monitorConnection() {
-    const now = getTime();
+  _sendKeepaliveReq() {
+    clearTimeout(this.ackTimeoutId);
+    clearTimeout(this.keepaliveTimeoutId);
+    this.messageId += 1;
+    const msg = 'KEEPALIVE_REQ ' + this.messageId + ' ' + JSON.stringify(this.payload);
+    this.send(msg);
 
-    if (this.verbose)
-      console.log('> monitorConnection (lastSeen, now):', this.lastSeen, now);
+    this.ackTimeoutId = setTimeout(this._resetConnection, ACK_TIMEOUT);
+  }
 
-    if (now - this.lastSeen > 4) {
-      if (this.verbose)
-        console.log('> close', this.server);
+  _receiveKeepaliveAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    if(this.messageId !== messageId) {
+      if(this.verbose) {
+        console.log('ignore keepalive ack ' + msg[1]);
+      }
+    } else {
+      clearTimeout(this.ackTimeoutId);
+      clearTimeout(this.keepaliveTimeoutId);
 
-      this.emit('close');
+      this.keepaliveTimeoutId = setTimeout(this._sendKeepaliveReq, KEEPALIVE_INTERVAL);
+    }
+  }
+
+  _receiveError(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    if(this.messageId !== messageId) {
+      if(this.verbose) {
+        console.log('ignore error ' + msg[1]);
+      }
+    } else {
       this._resetConnection();
+      if(this.verbose) {
+        console.log('> error: ' + msg);
+      }
     }
   }
 
   _resetConnection() {
-    clearTimeout(this.handshakeIntervalId);
-    clearInterval(this.pingIntervalId);
-    clearInterval(this.monitorIntervalId);
-    this.pingIntervalId = null;
-    this.monitorIntervalId = null;
+    this.messageId += 1; // discard any previous message
 
-    this.server = null;
-    this.lastSeen = null;
+    clearTimeout(this.ackTimeoutId);
+    clearTimeout(this.discoverTimeoutId);
+    clearTimeout(this.keepaliveTimeoutId);
+
+    if(this.state === 'connected') {
+      this.emit('close');
+    }
+
     this.state = 'disconnected';
-    // restart handshake attempt
-    this._sendHandshake();
+    this.server = null;
+
+    this._sendDiscoverReq();
   }
 }
 

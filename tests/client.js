@@ -1,4 +1,4 @@
-const { DiscoveryClient } = require('../dist/index');
+const { DiscoveryClient } = require('../dist/index');
 const { BROADCAST_PORT } = require('../dist/config');
 
 const num = process.argv[2];
