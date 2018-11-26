@@ -193,6 +193,7 @@ class DiscoveryClient extends EventEmitter {
       clearTimeout(this.ackTimeoutId);
 
       this.state = 'connected';
+      this.emit('connection', rinfo);
       this._sendKeepaliveReq();
     }
   }
