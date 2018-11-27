@@ -8,9 +8,6 @@ function getKey(rinfo) {
   return rinfo.address + ':' + rinfo.port;
 }
 
-const MONITOR_INTERVAL = 1000; // ms
-const DISCONNECT_TIMEOUT = 4; // s
-
 /**
  * Create a server that waits for new connection from DiscoveryClient.
  *
@@ -24,6 +21,8 @@ const DISCONNECT_TIMEOUT = 4; // s
 class DiscoveryServer extends EventEmitter {
   constructor({
     broadcastPort = BROADCAST_PORT,
+    monitorInterval = 2000, // ms
+    disconnectTimeout = 10000, // ms
     verbose = false
   } = {}) {
     super();
@@ -31,6 +30,9 @@ class DiscoveryServer extends EventEmitter {
     this.broadcastPort = broadcastPort;
     this.verbose = verbose;
     this.clients = new Map();
+
+    this.monitorInterval = monitorInterval;
+    this.disconnectTimeout = disconnectTimeout;
 
     this._receiveDiscoverReq.bind(this);
     this._sendDiscoverAck.bind(this);
@@ -50,13 +52,14 @@ class DiscoveryServer extends EventEmitter {
    */
   start() {
     this._setupSocket();
-    this._monitorIntervalId = setInterval(this._monitorClients, MONITOR_INTERVAL);
+    this._monitorIntervalId = setInterval(this._monitorClients, this.monitorInterval);
   }
 
   /**
    * Stop the server
    */
   stop() {
+    clearInterval(this._monitorIntervalId);
     this.udp.close();
   }
 
@@ -217,7 +220,8 @@ class DiscoveryServer extends EventEmitter {
     for (let [key, client] of this.clients.entries()) {
       const { lastSeen } = client;
 
-      if (now - lastSeen > DISCONNECT_TIMEOUT) {
+      // times in seconds, timeout in milliseconds
+      if (now - lastSeen > 0.001 * this.disconnectTimeout) {
         this._disconnectClient(key);
       }
     }

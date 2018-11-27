@@ -1,13 +1,8 @@
 import dgram from 'dgram';
-import os from 'os';
 import { EventEmitter } from 'events';
-import { BROADCAST_PORT } from './config';
-import { getTime } from './utils';
+import { BROADCAST_PORT } from './config';
 
 const BROADCAST_ADDRESS = '255.255.255.255';
-const DISCOVER_INTERVAL = 1000;
-const ACK_TIMEOUT = 4000; // reset connection after duration
-const KEEPALIVE_INTERVAL = 1000; // ms
 
 /**
  * Create a client that tries to connect to a DiscoveryServer.
@@ -25,8 +20,13 @@ const KEEPALIVE_INTERVAL = 1000; // ms
  */
 class DiscoveryClient extends EventEmitter {
   constructor({
-    port = BROADCAST_PORT,
-    broadcastPort = BROADCAST_PORT,
+    port = BROADCAST_PORT,
+    broadcastPort = BROADCAST_PORT,
+    broadcastAddress = BROADCAST_ADDRESS,
+    discoverInterval = 2000, // ms
+    keepaliveInterval = 1000, // ms
+    retryTimeout = 1000, // ms, try request again after duration
+    disconnectTimeout = 10000, // ms, reset connection after duration
     payload = {},
     verbose = false,
   } = {}) {
@@ -34,6 +34,7 @@ class DiscoveryClient extends EventEmitter {
 
     this.port = port;
     this.broadcastPort = broadcastPort;
+    this.broadcastAddress = broadcastAddress;
     this.payload = payload;
     this.verbose = verbose;
 
@@ -46,8 +47,13 @@ class DiscoveryClient extends EventEmitter {
     this.messageId = -1; // ID of _last_ message
     this.send = this.send.bind(this);
 
-    this.ackTimeoutId = null; // for aperiodic request
+    this.retryTimeout = retryTimeout;
+    this.retryTimeoutId = null;
 
+    this.disconnectTimeout = disconnectTimeout;
+    this.disconnectTimeoutId = null;
+
+    this.discoverInterval = discoverInterval;
     this.discoverTimeoutId = null; // periodic
     this._sendDiscoverReq = this._sendDiscoverReq.bind(this);
     this._receiveDiscoverAck = this._receiveDiscoverAck.bind(this);
@@ -55,6 +61,7 @@ class DiscoveryClient extends EventEmitter {
     this._sendConnectReq = this._sendConnectReq.bind(this);
     this._receiveConnectAck = this._receiveConnectAck.bind(this);
 
+    this.keepaliveInterval = keepaliveInterval;
     this.keepaliveTimeoutId = null; // periodic
     this._sendKeepaliveReq = this._sendKeepaliveReq.bind(this);
     this._receiveKeepaliveAck = this._receiveKeepaliveAck.bind(this);
@@ -101,7 +108,7 @@ class DiscoveryClient extends EventEmitter {
     if (this.udp) {
       const buf = Buffer.from(msg);
       const port =  this.broadcastPort;
-      const address= BROADCAST_ADDRESS;
+      const address = this.broadcastAddress;
 
       this.udp.setBroadcast(true);
       this.udp.send(buf, 0, buf.length, port, address);
@@ -163,7 +170,7 @@ class DiscoveryClient extends EventEmitter {
     this.broadcast(msg);
 
     // send handshakes until we have a response from the server
-    this.discoverTimeoutId = setTimeout(this._sendDiscoverReq, DISCOVER_INTERVAL);
+    this.discoverTimeoutId = setTimeout(this._sendDiscoverReq, this.discoverInterval);
   }
 
   _receiveDiscoverAck(msg, rinfo) {
@@ -177,7 +184,7 @@ class DiscoveryClient extends EventEmitter {
 
       this.server = rinfo;
       if(this.verbose) {
-        console.log('> discovered: ', this.server);
+        console.log('> discover: ', this.server);
       }
 
       if(this.state !== 'connected') {
@@ -187,12 +194,12 @@ class DiscoveryClient extends EventEmitter {
   }
 
   _sendConnectReq() {
-    clearTimeout(this.ackTimeoutId);
+    clearTimeout(this.retryTimeoutId);
     this.messageId += 1;
     const msg = 'CONNECT_REQ ' + this.messageId + ' ' + JSON.stringify(this.payload);
     this.send(msg);
 
-    this.ackTimeoutId = setTimeout(this._resetConnection, ACK_TIMEOUT);
+    this.retryTimeoutId = setTimeout(this._sendConnectReq, this.retryTimeout);
   }
 
   _receiveConnectAck(msg, rinfo) {
@@ -202,7 +209,7 @@ class DiscoveryClient extends EventEmitter {
         console.log('ignore connect ack ' + msg[1]);
       }
     } else {
-      clearTimeout(this.ackTimeoutId);
+      clearTimeout(this.retryTimeoutId);
 
       this.state = 'connected';
       this.emit('connection', rinfo);
@@ -211,13 +218,17 @@ class DiscoveryClient extends EventEmitter {
   }
 
   _sendKeepaliveReq() {
-    clearTimeout(this.ackTimeoutId);
+    clearTimeout(this.retryTimeoutId);
     clearTimeout(this.keepaliveTimeoutId);
+
     this.messageId += 1;
     const msg = 'KEEPALIVE_REQ ' + this.messageId + ' ' + JSON.stringify(this.payload);
     this.send(msg);
 
-    this.ackTimeoutId = setTimeout(this._resetConnection, ACK_TIMEOUT);
+    this.retryTimeoutId = setTimeout(this._sendKeepaliveReq, this.retryTimeout);
+    if(!this.disconnectTimeoutId) {
+      this.disconnectTimeoutId = setTimeout(this._resetConnection, this.disconnectTimeout);
+    }
   }
 
   _receiveKeepaliveAck(msg, rinfo) {
@@ -227,10 +238,12 @@ class DiscoveryClient extends EventEmitter {
         console.log('ignore keepalive ack ' + msg[1]);
       }
     } else {
-      clearTimeout(this.ackTimeoutId);
+      clearTimeout(this.retryTimeoutId);
       clearTimeout(this.keepaliveTimeoutId);
+      clearTimeout(this.disconnectTimeoutId);
+      this.disconnectTimeoutId = null;
 
-      this.keepaliveTimeoutId = setTimeout(this._sendKeepaliveReq, KEEPALIVE_INTERVAL);
+      this.keepaliveTimeoutId = setTimeout(this._sendKeepaliveReq, this.keepaliveInterval);
     }
   }
 
@@ -251,7 +264,8 @@ class DiscoveryClient extends EventEmitter {
   _resetConnection() {
     this.messageId += 1; // discard any previous message
 
-    clearTimeout(this.ackTimeoutId);
+    clearTimeout(this.retryTimeoutId);
+    clearTimeout(this.disconnectTimeoutId);
     clearTimeout(this.discoverTimeoutId);
     clearTimeout(this.keepaliveTimeoutId);
 
