@@ -19,7 +19,6 @@ client.on('message', (rinfo, msg) => {
 client.start();
 
 // const exitHandler = () => client.stop();
-
 // // do something when app is closing
 // process.on('exit', exitHandler);
 // // catches ctrl+c event

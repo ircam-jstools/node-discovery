@@ -210,8 +210,9 @@ class DiscoveryClient extends EventEmitter {
 
   _receiveKeepaliveAck(msg, rinfo) {
     const messageId = parseInt(msg[1]);
-    if(this.messageId !== messageId) {
-      if(this.verbose) {
+
+    if (this.messageId !== messageId) {
+      if (this.verbose) {
         console.log('ignore keepalive ack ' + msg[1]);
       }
     } else {
@@ -224,8 +225,8 @@ class DiscoveryClient extends EventEmitter {
 
   _receiveError(msg, rinfo) {
     const messageId = parseInt(msg[1]);
-    if(this.messageId !== messageId) {
-      if(this.verbose) {
+    if (this.messageId !== messageId) {
+      if (this.verbose) {
         console.log('ignore error ' + msg[1]);
       }
     } else {
@@ -243,7 +244,7 @@ class DiscoveryClient extends EventEmitter {
     clearTimeout(this.discoverTimeoutId);
     clearTimeout(this.keepaliveTimeoutId);
 
-    if(this.state === 'connected') {
+    if (this.state === 'connected') {
       this.emit('close');
     }
 
