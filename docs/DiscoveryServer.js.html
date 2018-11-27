@@ -40,9 +40,6 @@ function getKey(rinfo) {
   return rinfo.address + ':' + rinfo.port;
 }
 
-const MONITOR_INTERVAL = 1000; // ms
-const DISCONNECT_TIMEOUT = 4; // s
-
 /**
  * Create a server that waits for new connection from DiscoveryClient.
  *
@@ -56,6 +53,8 @@ const DISCONNECT_TIMEOUT = 4; // s
 class DiscoveryServer extends EventEmitter {
   constructor({
     broadcastPort = BROADCAST_PORT,
+    monitorInterval = 2000, // ms
+    disconnectTimeout = 10000, // ms
     verbose = false
   } = {}) {
     super();
@@ -64,7 +63,20 @@ class DiscoveryServer extends EventEmitter {
     this.verbose = verbose;
     this.clients = new Map();
 
+    this.monitorInterval = monitorInterval;
+    this.disconnectTimeout = disconnectTimeout;
+
+    this._receiveDiscoverReq.bind(this);
+    this._sendDiscoverAck.bind(this);
+
+    this._receiveConnectReq.bind(this);
+    this._sendConnectAck.bind(this);
+
+    this._receiveKeepaliveReq.bind(this);
+    this._sendKeepaliveAck.bind(this);
+
     this._monitorClients = this._monitorClients.bind(this);
+    this.send = this.send.bind(this);
   }
 
   /**
@@ -72,13 +84,14 @@ class DiscoveryServer extends EventEmitter {
    */
   start() {
     this._setupSocket();
-    this._monitorIntervalId = setInterval(this._monitorClients, MONITOR_INTERVAL);
+    this._monitorIntervalId = setInterval(this._monitorClients, this.monitorInterval);
   }
 
   /**
    * Stop the server
    */
   stop() {
+    clearInterval(this._monitorIntervalId);
     this.udp.close();
   }
 
@@ -93,46 +106,46 @@ class DiscoveryServer extends EventEmitter {
     if (this.udp) {
       const buf = Buffer.from(msg);
       this.udp.send(buf, 0, buf.length, port, address);
+
+      if(this.verbose) {
+        console.log('send: ', msg);
+      }
     }
   }
 
   _setupSocket() {
     this.udp = dgram.createSocket('udp4');
 
-    let _rinfo = null;
-
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
       const key = getKey(rinfo);
-      msg[0] = msg[0].trim();
 
-      if (msg[0] === 'DISCOVERY_HANDSHAKE') {
-        if (!this.clients.has(key)) {
-          this._receiveHandshake(msg, rinfo);
-        } else {
-          const client = this.clients.get(key);
-          const handshakeId = parseInt(msg[1]);
+      if(this.verbose) {
+        console.log('receive: ', msg);
+      }
 
-          // the handshake message is broadcasted, then it can be received
-          // multiple times according to number of network device
-          if (client.handshakeId !== handshakeId) {
-            // client is registered by the server but sends handshake
-            // aka client restarted -> reset the connection
-            this._disconnectClient(key);
-            this._sendError(msg, rinfo);
-          }
+      switch(msg[0]) {
+        case 'DISCOVER_REQ': {
+          this._receiveDiscoverReq(msg, rinfo);
+          break;
         }
-      } else if (msg[0] === 'DISCOVERY_PING') {
-        if (this.clients.has(key)) {
-          this._receivePing(msg, rinfo);
-        } else {
-          // client is not registered by server but sends a ping
-          // aka server restarted => ask for handshake
-          this._sendError(msg, rinfo);
+        case 'CONNECT_REQ': {
+          this._receiveConnectReq(msg, rinfo);
+          break;
         }
-      } else {
-        // forward any message that are not related to the protocol
-        this.emit('message', buffer, rinfo);
+        case 'KEEPALIVE_REQ': {
+          this._receiveKeepaliveReq(msg, rinfo);
+          break;
+        }
+        case 'ERROR': {
+          this._receiveError(msg, rinfo);
+          break;
+        }
+        default: {
+          // forward any message that are not related to the protocol
+          this.emit('message', buffer, rinfo);
+          break;
+        }
       }
     });
 
@@ -143,19 +156,76 @@ class DiscoveryServer extends EventEmitter {
     });
   }
 
-  _receiveHandshake(msg, rinfo) {
+  _receiveDiscoverReq(msg, rinfo) {
+    // unconditional
+    this._sendDiscoverAck(msg, rinfo);
+  }
+
+  _sendDiscoverAck(msg, rinfo) {    const messageId = parseInt(msg[1]);
+    this.send('DISCOVER_ACK ' + messageId, rinfo.port, rinfo.address);
+  }
+
+  _receiveConnectReq(msg, rinfo) {
     const key = getKey(rinfo);
-    const lastSeen = getTime();
-    const handshakeId = parseInt(msg[1]);
-    let payload = null;
 
-    try {
-      payload = JSON.parse(msg[2]);
-    } catch(e) {
-      payload = {};
+    if (this.clients.has(key)) {
+      this._disconnectClient(key);
+      this._sendError(msg, rinfo);
+    } else {
+      let payload = null;
+      try {
+        payload = JSON.parse(msg[2]);
+      } catch(e) {
+        payload = {};
+      }
+      this._connectClient(key, rinfo, payload);
+      this._sendConnectAck(msg, rinfo);
     }
+  }
 
-    const client = { rinfo, lastSeen, payload, handshakeId };
+  _sendConnectAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    this.send('CONNECT_ACK ' + messageId, rinfo.port, rinfo.address);
+  }
+
+
+  _receiveKeepaliveReq(msg, rinfo) {
+    const key = getKey(rinfo);
+
+    if (!this.clients.has(key)) {
+      this._sendError(msg, rinfo);
+    } else {
+      const client = this.clients.get(key);
+      client.lastSeen = getTime();
+      this._sendKeepaliveAck(msg, rinfo);
+    }
+  }
+
+  _sendKeepaliveAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
+    this.send('KEEPALIVE_ACK ' + messageId, rinfo.port, rinfo.address);
+  }
+
+  _receiveError(msg, rinfo) {
+    const key = getKey(rinfo);
+
+    if (this.clients.has(key)) {
+      this._disconnectClient(key);
+    }
+    this._sendError(msg, rinfo);
+  }
+
+  _sendError(msg, rinfo) {
+    const messageId = msg[1];
+    this.send('ERROR ' + messageId + ' ' + msg[0], rinfo.port, rinfo.address);
+  }
+
+  _connectClient(key, rinfo, payload) {
+    const client = {
+      rinfo,
+      lastSeen: getTime(),
+      payload,
+    };
 
     this.clients.set(key, client);
     this.emit('connection', client, this.clients);
@@ -163,24 +233,6 @@ class DiscoveryServer extends EventEmitter {
     if (this.verbose) {
       console.log('> connection:', client);
     }
-
-    const ack = Buffer.from('DISCOVERY_HANDSHAKE_ACK');
-    this.udp.send(ack, 0, ack.length, rinfo.port, rinfo.address);
-  }
-
-  _receivePing(msg, rinfo) {
-    const now =  getTime();
-    const key = getKey(rinfo);
-    const client = this.clients.get(key);
-    client.lastSeen = now;
-    // send pong
-    const pong = Buffer.from('DISCOVERY_PONG');
-    this.udp.send(pong, 0, pong.length, rinfo.port, rinfo.address);
-  }
-
-  _sendError(msg, rinfo) {
-    const err = Buffer.from('DISCOVERY_ERROR');
-    this.udp.send(err, 0, err.length, rinfo.port, rinfo.address);
   }
 
   _disconnectClient(key) {
@@ -200,7 +252,8 @@ class DiscoveryServer extends EventEmitter {
     for (let [key, client] of this.clients.entries()) {
       const { lastSeen } = client;
 
-      if (now - lastSeen > DISCONNECT_TIMEOUT) {
+      // times in seconds, timeout in milliseconds
+      if (now - lastSeen > 0.001 * this.disconnectTimeout) {
         this._disconnectClient(key);
       }
     }
@@ -225,7 +278,7 @@ export default DiscoveryServer;
 
 <footer>
     
-        Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.5.5</a> on Wed Sep 26 2018 14:22:40 GMT+0200 (CEST)
+        Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.5.5</a> on Tue Nov 27 2018 16:11:44 GMT+0100 (CET)
     
 </footer>
 
