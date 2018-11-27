@@ -71,6 +71,10 @@ class DiscoveryServer extends EventEmitter {
     if (this.udp) {
       const buf = Buffer.from(msg);
       this.udp.send(buf, 0, buf.length, port, address);
+
+      if(this.verbose) {
+        console.log('send: ', msg);
+      }
     }
   }
 
@@ -80,6 +84,10 @@ class DiscoveryServer extends EventEmitter {
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
       const key = getKey(rinfo);
+
+      if(this.verbose) {
+        console.log('receive: ', msg);
+      }
 
       switch(msg[0]) {
         case 'DISCOVER_REQ': {
@@ -118,9 +126,8 @@ class DiscoveryServer extends EventEmitter {
     this._sendDiscoverAck(msg, rinfo);
   }
 
-  _sendDiscoverAck(msg, rinfo) {
-    const messageId = parseInt(msg[1]);
-    this.send('DISCOVER_ACK ' + messageId, rinfo.port, rinfo.addess);
+  _sendDiscoverAck(msg, rinfo) {    const messageId = parseInt(msg[1]);
+    this.send('DISCOVER_ACK ' + messageId, rinfo.port, rinfo.address);
   }
 
   _receiveConnectReq(msg, rinfo) {
@@ -143,7 +150,7 @@ class DiscoveryServer extends EventEmitter {
 
   _sendConnectAck(msg, rinfo) {
     const messageId = parseInt(msg[1]);
-    this.send('CONNECT_ACK ' + messageId, rinfo.port, rinfo.addess);
+    this.send('CONNECT_ACK ' + messageId, rinfo.port, rinfo.address);
   }
 
 
@@ -161,7 +168,7 @@ class DiscoveryServer extends EventEmitter {
 
   _sendKeepaliveAck(msg, rinfo) {
     const messageId = parseInt(msg[1]);
-    this.send('KEEPALIVE_ACK ' + messageId, rinfo.port, rinfo.addess);
+    this.send('KEEPALIVE_ACK ' + messageId, rinfo.port, rinfo.address);
   }
 
   _receiveError(msg, rinfo) {

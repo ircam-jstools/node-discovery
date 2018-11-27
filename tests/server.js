@@ -1,6 +1,6 @@
 const { DiscoveryServer } = require('../dist/index');
 
-const server = new DiscoveryServer({ verbose: false });
+const server = new DiscoveryServer({ verbose: true });
 
 server.addListener('connection', (client, clients) => {
   // console.log('connection: client', client);

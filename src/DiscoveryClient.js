@@ -90,6 +90,10 @@ class DiscoveryClient extends EventEmitter {
 
       this.udp.setBroadcast(false);
       this.udp.send(buf, 0, buf.length, port, address);
+
+      if(this.verbose) {
+        console.log('send: ', msg);
+      }
     }
   }
 
@@ -101,6 +105,10 @@ class DiscoveryClient extends EventEmitter {
 
       this.udp.setBroadcast(true);
       this.udp.send(buf, 0, buf.length, port, address);
+
+      if(this.verbose) {
+        console.log('broadcast: ', msg);
+      }
     }
   }
 
@@ -109,6 +117,10 @@ class DiscoveryClient extends EventEmitter {
 
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
+
+      if(this.verbose) {
+        console.log('receive: ', msg);
+      }
 
       switch(msg[0]) {
         case 'DISCOVER_ACK': {

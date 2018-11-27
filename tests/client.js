@@ -7,7 +7,7 @@ const port = BROADCAST_PORT + parseInt(num);
 console.log('client will be on port:', port);
 
 const client = new DiscoveryClient({
-  verbose: false,
+  verbose: true,
   port: port,
   payload: { hostname: `pouet-${num}.local` },
 });
