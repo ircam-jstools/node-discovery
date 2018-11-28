@@ -75,7 +75,7 @@ class DiscoveryServer extends EventEmitter {
       const buf = Buffer.from(msg);
       this.udp.send(buf, 0, buf.length, port, address);
 
-      if(this.verbose) {
+      if (this.verbose) {
         console.log('send: ', msg);
       }
     }
@@ -93,7 +93,7 @@ class DiscoveryServer extends EventEmitter {
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
 
-      if(this.verbose) {
+      if (this.verbose) {
         console.log('receive: ', msg);
       }
 
@@ -134,7 +134,8 @@ class DiscoveryServer extends EventEmitter {
     this._sendDiscoverAck(msg, rinfo);
   }
 
-  _sendDiscoverAck(msg, rinfo) {    const messageId = parseInt(msg[1]);
+  _sendDiscoverAck(msg, rinfo) {
+    const messageId = parseInt(msg[1]);
     this.send('DISCOVER_ACK ' + messageId, rinfo.port, rinfo.address);
   }
 
@@ -185,6 +186,7 @@ class DiscoveryServer extends EventEmitter {
     if (this.clients.has(key)) {
       this._disconnectClient(key);
     }
+
     this._sendError(msg, rinfo);
   }
 
