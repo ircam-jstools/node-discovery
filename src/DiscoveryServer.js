@@ -82,11 +82,16 @@ class DiscoveryServer extends EventEmitter {
   }
 
   _setupSocket() {
-    this.udp = dgram.createSocket('udp4');
+    this.udp = dgram.createSocket({
+      type: 'udp4',
+      // use SO_REUSEADDR or SO_REUSEPORT depending on OS
+      // it might help with firewall, but seems insufficient
+      // see https://stackoverflow.com/questions/25586327/bizarre-firewall-related-socket-leak-on-mac-os-x
+      reuseAddr: true,
+    });
 
     this.udp.on('message', (buffer, rinfo) => {
       const msg = buffer.toString().split(' ');
-      const key = getKey(rinfo);
 
       if(this.verbose) {
         console.log('receive: ', msg);

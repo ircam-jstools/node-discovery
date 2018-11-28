@@ -14,14 +14,40 @@ server.addListener('close', (client, clients) => {
 
 server.start();
 
-// const exitHandler = () => server.stop();
+const exitHandler = () => {
+  try {
+    server.stop();
+  } catch (error) {
+    // no throwing any more
+  }
+};
 
-// // do something when app is closing
-// process.on('exit', exitHandler);
-// // catches ctrl+c event
-// process.on('SIGINT', exitHandler);
-// // catches "kill pid" (for example: nodemon restart)
-// process.on('SIGUSR1', exitHandler);
-// process.on('SIGUSR2', exitHandler);
-// // catches uncaught exceptions
-// process.on('uncaughtException', exitHandler);
+// do something when app is closing
+process.on('exit', () =>
+           {
+             console.log('exit');
+             exitHandler();
+           });
+// catches ctrl+c event
+process.on('SIGINT', () =>
+           {
+             console.log('SIGINT');
+             exitHandler();
+           });
+// catches "kill pid" (for example: nodemon restart)
+process.on('SIGUSR1', () =>
+           {
+             console.log('SIGUSR1');
+             exitHandler();
+           });
+process.on('SIGUSR2', () =>
+           {
+             console.log('SIGUSR2');
+             exitHandler();
+           });
+// catches uncaught exceptions
+process.on('uncaughtException', () =>
+           {
+             console.log('Uncaught exception');
+             exitHandler();
+           });
